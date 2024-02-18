@@ -2,6 +2,7 @@
 using System.Collections;
 using UnityEditor;
 using Unity.EditorCoroutines.Editor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 
 public class LevelEditor : EditorWindow
@@ -9,37 +10,72 @@ public class LevelEditor : EditorWindow
     [MenuItem("Tools/Level Editor")]
     public static void ShowWindow() => GetWindow<LevelEditor>("Level Editor");
 
-    [SerializeField]
-    private GameObject[] _prefabs;
-    private Texture[] _prefabIcons;
-    [SerializeField]
-    private GameObject _selectedObject;
-    [SerializeField]
-    private Material _previewMaterial;
+    /// <summary>
+    /// Prefabs to spawn to compose the scene
+    /// </summary>
+    [SerializeField] private GameObject[] _prefabs;
+    
+    /// <summary>
+    /// The current selected prefab from the scene view UI (palette menu)
+    /// </summary>
+    [SerializeField] private GameObject _selectedObject;
 
+    /// <summary>
+    /// Material of the prefab preview visualized in the scene
+    /// </summary>
+    [SerializeField] private Material _previewMaterial;
+
+    /// <summary>
+    /// Mutex for enable/disable the render of the prefab preview
+    /// </summary>
+    [SerializeField] private bool _enablePrefabPreview;
+
+    /// <summary>
+    /// Mutex for enable/disable the preview snapping
+    /// </summary>
+    [SerializeField] private bool _enablePreviewSnapping;
+
+    /// <summary>
+    /// Rect of the palette menu (scene view UI)
+    /// </summary>
+    private Rect _paletteMenuRect;
+
+    /// <summary>
+    /// The prefabs icons visualized in the scene view UI (palette menu)
+    /// </summary>
+    private Texture[] _prefabIcons;
+
+    /// <summary>
+    /// Index of the current prefab selected in the palette menu
+    /// </summary>
     private int _selectionGridIndex;
+
+    /// <summary>
+    /// Position of the palette menu scroll view
+    /// </summary>
     private Vector2 _scrollPos;
+
+    /// <summary>
+    /// y component of the spawn position
+    /// </summary>
+    [SerializeField] private float _spawnPositionHeight;
+
     private Vector3 _previewPosition;
     private Quaternion _previewRotation;
-    [SerializeField]
-    private bool _enablePrefabPreview;
-    private Rect _paletteMenuRect;
-    
+
     private SerializedObject _so;
     private SerializedProperty _previewMaterialP;
     private SerializedProperty _enablePrefabPreviewP;
-
-    private GameObject _hitDetectionPlane;
+    private SerializedProperty _enablePreviewSnappingP;
+    private SerializedProperty _spawnPositionHeightP;
 
     private void OnEnable()
     {
-        this.StartCoroutine(InitializeLevelEditor());
+        InitializeLevelEditor();
     }
 
     private void OnDisable()
     {
-        _so = null;
-        DestroyImmediate(_hitDetectionPlane);
         SceneView.duringSceneGui -= DuringSceneGUI;
     }
 
@@ -47,8 +83,24 @@ public class LevelEditor : EditorWindow
     {
         if (_so == null) return;
         _so.Update();
-        EditorGUILayout.PropertyField(_previewMaterialP);
         EditorGUILayout.PropertyField(_enablePrefabPreviewP);
+        if (_enablePrefabPreview)
+        {
+            EditorGUILayout.PropertyField(_enablePreviewSnappingP);
+            EditorGUILayout.PropertyField(_previewMaterialP);
+            EditorGUILayout.PropertyField(_spawnPositionHeightP);
+        }
+
+        if (GUILayout.Button("Save Current Level"))
+            EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo();
+        if (GUILayout.Button("Make New Level"))
+        {
+            if (EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
+                EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+        }
+            
+
+
         if (_so.ApplyModifiedProperties())
         {
             Repaint();
@@ -56,57 +108,53 @@ public class LevelEditor : EditorWindow
         }
     }
 
-    private IEnumerator InitializeLevelEditor()
-    {
-        yield return null;
-        GenerateHitDetectionPlane();
-        LoadPrefabs();
-
-        float sceneViewWidth = SceneView.lastActiveSceneView.camera.pixelWidth * 0.01f;
-        float sceneViewHeight = SceneView.lastActiveSceneView.camera.pixelHeight * 0.2f;
-        _paletteMenuRect = new Rect(sceneViewWidth, sceneViewHeight, 170, 500);
-
-        _enablePrefabPreview = true;
-        _previewRotation = Quaternion.identity;
-        _so = new SerializedObject(this);
-        _previewMaterialP = _so.FindProperty("_previewMaterial");
-        _enablePrefabPreviewP = _so.FindProperty("_enablePrefabPreview");
-        SceneView.duringSceneGui += DuringSceneGUI;
-    }
-
     private void DuringSceneGUI(SceneView sceneView)
     {
         DrawPaletteMenu(sceneView);
-        DrawPrefabPreview();
-        UpdatePreviewTransform(sceneView);
-        UpdateDetectionPlanePosition(sceneView);
+        DrawPrefabPreview(sceneView);
 
-        bool isHoldingShift = (Event.current.modifiers & EventModifiers.Shift) != 0;
-
-        if (Event.current.type == EventType.MouseDown && Event.current.button == 0 && isHoldingShift)
+        //Shift + Left-Click for spawn the selected prefab (only if prefab preview is enabled)
+        if (Event.current.type == EventType.MouseDown && Event.current.button == 0 && Event.current.shift)
         {
             SpawnPrefab();
         }
 
-        if (Event.current.keyCode == KeyCode.F && Event.current.type == EventType.KeyDown && isHoldingShift)
+        //Shift + F for enable/disable the preview of the current selected prefab
+        if (Event.current.keyCode == KeyCode.F && Event.current.type == EventType.KeyDown && Event.current.shift)
         {
             _enablePrefabPreview = !_enablePrefabPreview;
             Repaint();
         }
 
-        
+        //Shift + E for enable/disable the preview of the current selected prefab
+        if (Event.current.keyCode == KeyCode.E && Event.current.type == EventType.KeyDown && Event.current.shift)
+        {
+            _enablePreviewSnapping = !_enablePreviewSnapping;
+            Repaint();
+        }
+
+        //Shift + Scroll Wheel for modifying the altitude where to spawn the selected prefab
+        if (Event.current.type == EventType.ScrollWheel && Event.current.shift)
+        {
+            float scrollDirection = -Event.current.delta.normalized.x;
+            _spawnPositionHeight += scrollDirection;
+            Repaint();
+        }
     }
 
-    private void SpawnPrefab()
-    {
-        GameObject obj = PrefabUtility.InstantiatePrefab(_selectedObject) as GameObject;
-        Undo.RegisterCreatedObjectUndo(obj, "Object Spawn");
-        obj.transform.SetPositionAndRotation(_previewPosition, _previewRotation);
-    }
+    #region SCREEN VIEW PALETTE MENU:
 
     private void DrawPaletteMenu(SceneView sceneView)
     {
         _paletteMenuRect = GUI.Window(0, _paletteMenuRect, DrawPaletteMenuContent, "Rooms Palette");
+        UpdatePaletteMenuPosition(sceneView);
+    }
+
+    /// <summary>
+    /// Manages the dragging of the palette menu
+    /// </summary>
+    private void UpdatePaletteMenuPosition(SceneView sceneView)
+    {
         if (Event.current.type == EventType.MouseDrag && Event.current.button == 0 && IsMouseOverPaletteMenu())
         {
             _paletteMenuRect.position += Event.current.delta;
@@ -118,8 +166,9 @@ public class LevelEditor : EditorWindow
 
     private bool IsMouseOverPaletteMenu()
     {
-        Vector2 tmp = Event.current.mousePosition - _paletteMenuRect.position;
-        if (tmp.x <= _paletteMenuRect.width && tmp.y <= _paletteMenuRect.height && tmp.x > 0f && tmp.y > 0f)
+        //this vector is the pointer position from the palette menu reference frame
+        Vector2 relativePointerPos = Event.current.mousePosition - _paletteMenuRect.position;
+        if (relativePointerPos.x <= _paletteMenuRect.width && relativePointerPos.y <= _paletteMenuRect.height && relativePointerPos.x > 0f && relativePointerPos.y > 0f)
             return true;
         return false;
     }
@@ -132,8 +181,10 @@ public class LevelEditor : EditorWindow
             {
                 _scrollPos = GUILayout.BeginScrollView(_scrollPos);
 
+                //cache the selected index before it can be modified
                 int index = _selectionGridIndex;
-                _selectionGridIndex = GUILayout.SelectionGrid(_selectionGridIndex, _prefabIcons, 1);
+                int selectionGridColumnCount = 1;
+                _selectionGridIndex = GUILayout.SelectionGrid(_selectionGridIndex, _prefabIcons, selectionGridColumnCount);
                 PerformSelectionChange(index);
 
                 GUILayout.EndScrollView();
@@ -152,18 +203,9 @@ public class LevelEditor : EditorWindow
 
     }
 
-    private void LoadPrefabs()
-    {
-        _prefabs = Resources.LoadAll<GameObject>("Rooms/");
-        _selectionGridIndex = 0;
-        _prefabIcons = new Texture[_prefabs.Length];
-        for (int i = 0; i < _prefabs.Length; i++)
-        {
-            _prefabIcons[i] = AssetPreview.GetAssetPreview(_prefabs[i]);
-        }
-        _selectedObject = _prefabs.Length > 0 ? _prefabs[0] : null;
-    }
-
+    /// <summary>
+    /// If a new prefab was selected by the user in the palette menu (scene view UI) updates the selected prefab 
+    /// </summary>
     private void PerformSelectionChange(int index)
     {
         if (index != _selectionGridIndex)
@@ -172,24 +214,33 @@ public class LevelEditor : EditorWindow
         }
     }
 
-    private void DrawPrefabPreview()
+    private IEnumerator CreatePaletteMenuRect()
+    {
+        yield return null;
+        float rectPosX = SceneView.lastActiveSceneView.camera.pixelWidth * 0.01f;
+        float rectPosY = SceneView.lastActiveSceneView.camera.pixelHeight * 0.2f;
+        _paletteMenuRect = new Rect(rectPosX, rectPosY, 170, 500);
+    }
+
+    #endregion
+    #region PREFAB PREVIEW:
+
+    private void DrawPrefabPreview(SceneView sceneView)
     {
         if (_selectedObject == null) return;
         if (!_enablePrefabPreview) return;
 
-        
-        MeshFilter[] filters = _selectedObject.GetComponentsInChildren<MeshFilter>();
-        foreach(MeshFilter filter in filters)
+        Mesh mesh = _selectedObject.GetComponent<MeshFilter>().sharedMesh;
+        if (_previewMaterial)
         {
-            Mesh mesh = filter.sharedMesh;
-            Material mat = filter.GetComponent<MeshRenderer>().sharedMaterial;
-            //MaterialPropertyBlock materialPropertyBlock = new MaterialPropertyBlock();
-            //materialPropertyBlock.SetColor("_Color", Color.white);
-            //filter.GetComponent<MeshRenderer>().SetPropertyBlock(materialPropertyBlock);
-            mat.SetPass(1);
-            //filter.GetComponent<MeshRenderer>().sharedMaterial.SetPass(1);
-            Graphics.DrawMeshNow(mesh, _previewPosition, _previewRotation);
+            if (_previewMaterial.passCount > 1)
+                _previewMaterial.SetPass(1);
+            else _previewMaterial.SetPass(0);
         }
+        else return;
+
+        Graphics.DrawMeshNow(mesh, _previewPosition, _previewRotation);
+        UpdatePreviewTransform(sceneView);
     }
 
     private void UpdatePreviewTransform(SceneView sceneView)
@@ -205,22 +256,13 @@ public class LevelEditor : EditorWindow
     private void UpdatePreviewPosition()
     {
         Ray ray = HandleUtility.GUIPointToWorldRay(Event.current.mousePosition);
-        LayerMask snapLayer = 1 << 6;
-        if (Physics.Raycast(ray, out RaycastHit hit))
+        if (Physics.Raycast(ray, out RaycastHit hit) && hit.collider.CompareTag("Door") && _enablePreviewSnapping)
         {
-            if(hit.collider.includeLayers == snapLayer)
-            {
-                //Debug.Log("Snap");
-                TrySnapPreviewPosition(hit);
-            }
-            else
-            {
-                _previewPosition = hit.point;
-            }
+            TrySnapPreviewPosition(hit, ray);
         }
         else
         {
-            _previewPosition = ray.origin + (ray.direction * ray.origin.y);
+            _previewPosition = CalculatePreviewPosition(ray);
         }
     }
 
@@ -229,63 +271,85 @@ public class LevelEditor : EditorWindow
         if (Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.Space)
         {
             _previewRotation *= Quaternion.Euler(0f, 90f, 0f);
-            //Event.current.Use();
         }
     }
 
-    private void TrySnapPreviewPosition(RaycastHit hit)
+    private void TrySnapPreviewPosition(RaycastHit hit, Ray ray)
     {
-        hit.collider.TryGetComponent(out BoxCollider collider);
-        _selectedObject.TryGetComponent(out Room room);
-        Vector3 tmp = hit.collider.transform.parent.rotation * collider.center.normalized;
-        if (AreDoorsAligned(tmp, room))
+        hit.collider.TryGetComponent(out BoxCollider doorCollider);
+        _selectedObject.TryGetComponent(out Room selectedObject);
+
+        //this vector is a direction that goes from the center of the room
+        //present in the scene to its door currently inspected by the mouse pointer
+        Vector3 direction = hit.collider.transform.parent.rotation * doorCollider.center.normalized;
+
+        //if doors are aligned
+        if (Vector3.Dot(direction, _previewRotation * selectedObject.North) < -0.9f ||
+            Vector3.Dot(direction, _previewRotation * selectedObject.East) < -0.9f ||
+            Vector3.Dot(direction, _previewRotation * selectedObject.South) < -0.9f ||
+            Vector3.Dot(direction, _previewRotation * selectedObject.West) < -0.9f)
         {
-            _previewPosition = hit.collider.transform.parent.position + tmp * 15f;
+            float snapOffset = 15f;
+            _previewPosition = hit.collider.transform.parent.position + direction * snapOffset;
         }
         else
         {
-            _previewPosition = hit.point;
+            _previewPosition = CalculatePreviewPosition(ray);
         }
     }
 
-    private bool AreDoorsAligned(Vector3 a, Room room)
+    private Vector3 CalculatePreviewPosition(Ray ray)
     {
-        if (Vector3.Dot(a, _previewRotation * room.North) < -0.9f)
-        {
-            return true;
-        }
-        else if (Vector3.Dot(a, _previewRotation * room.East) < -0.9f)
-        {
-            return true;
-        }
-        else if (Vector3.Dot(a, _previewRotation * room.South) < -0.9f)
-        {
-            return true;
-        }
-        else if (Vector3.Dot(a, _previewRotation * room.West) < -0.9f)
-        {
-            return true;
-        }
-
-        return false;
+        // H = Y / D  where H = hypotenuse , Y = minor cathetus ,  D = Cos(angle between Y and H)
+        float hypotenuse = ray.origin.y / Vector3.Dot(Vector3.down, ray.direction);
+        return ray.origin + ray.direction * hypotenuse + Vector3.up * _spawnPositionHeight;
     }
 
-    private void GenerateHitDetectionPlane()
+    #endregion
+
+    private void InitializeLevelEditor()
     {
-        float x = SceneView.lastActiveSceneView.camera.transform.position.x;
-        float z = SceneView.lastActiveSceneView.camera.transform.position.z;
-        Vector3 pos = new Vector3(x, -0.05f, z);
-        _hitDetectionPlane = new GameObject("HIT_DETECTOR");
-        _hitDetectionPlane.transform.position = pos;
-        BoxCollider collider = _hitDetectionPlane.AddComponent<BoxCollider>();
-        collider.size = new Vector3(100000f, 0.1f, 100000f);
-        _hitDetectionPlane.hideFlags = HideFlags.HideAndDontSave;
+        LoadPrefabs();
+
+        this.StartCoroutine(CreatePaletteMenuRect());
+
+        _enablePrefabPreview = true;
+        _enablePreviewSnapping = true;
+        _previewRotation = Quaternion.identity;
+
+        _so = new SerializedObject(this);
+        _previewMaterialP = _so.FindProperty("_previewMaterial");
+        _enablePrefabPreviewP = _so.FindProperty("_enablePrefabPreview");
+        _enablePreviewSnappingP = _so.FindProperty("_enablePreviewSnapping");
+        _spawnPositionHeightP = _so.FindProperty("_spawnPositionHeight");
+
+        SceneView.duringSceneGui += DuringSceneGUI;
     }
 
-    private void UpdateDetectionPlanePosition(SceneView sceneView)
+    private void SpawnPrefab()
     {
-        _hitDetectionPlane.transform.position = new Vector3(sceneView.camera.transform.position.x, 0f, sceneView.camera.transform.position.z);
+        if (!_enablePrefabPreview) return;
+        GameObject obj = PrefabUtility.InstantiatePrefab(_selectedObject) as GameObject;
+        Undo.RegisterCreatedObjectUndo(obj, "Object Spawn");
+        obj.transform.SetPositionAndRotation(_previewPosition, _previewRotation);
     }
+
+    /// <summary>
+    /// Loads all prefabs from the project folder
+    /// </summary>
+    private void LoadPrefabs()
+    {
+        _prefabs = Resources.LoadAll<GameObject>("Rooms/");
+        _selectionGridIndex = 0;
+        _prefabIcons = new Texture[_prefabs.Length];
+        for (int i = 0; i < _prefabs.Length; i++)
+        {
+            _prefabIcons[i] = AssetPreview.GetAssetPreview(_prefabs[i]);
+        }
+        _selectedObject = _prefabs.Length > 0 ? _prefabs[0] : null;
+    }
+
+    
 }
 
 #endif

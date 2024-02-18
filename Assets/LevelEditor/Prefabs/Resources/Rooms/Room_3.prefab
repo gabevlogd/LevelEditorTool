@@ -12,7 +12,7 @@ GameObject:
   - component: {fileID: 2703574440878750642}
   m_Layer: 0
   m_Name: SnapDetector (1)
-  m_TagString: Untagged
+  m_TagString: Door
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -65,7 +65,7 @@ GameObject:
   - component: {fileID: 1806150232047070435}
   m_Layer: 0
   m_Name: SnapDetector (2)
-  m_TagString: Untagged
+  m_TagString: Door
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -118,7 +118,7 @@ GameObject:
   - component: {fileID: 997469255891094916}
   m_Layer: 0
   m_Name: SnapDetector
-  m_TagString: Untagged
+  m_TagString: Door
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
