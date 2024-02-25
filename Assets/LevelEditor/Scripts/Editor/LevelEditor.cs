@@ -14,7 +14,7 @@ public class LevelEditor : EditorWindow
     /// Prefabs to spawn to compose the scene
     /// </summary>
     [SerializeField] private GameObject[] _prefabs;
-    
+
     /// <summary>
     /// The current selected prefab from the scene view UI (palette menu)
     /// </summary>
@@ -55,10 +55,17 @@ public class LevelEditor : EditorWindow
     /// </summary>
     private Vector2 _scrollPos;
 
+    private bool _showSaveSection;
+    private bool _showLoadSection;
+
     /// <summary>
     /// y component of the spawn position
     /// </summary>
     [SerializeField] private float _spawnPositionHeight;
+
+    [SerializeField] private string _saveFolderName;
+    [SerializeField] private string _saveFileName;
+    [SerializeField] private string _loadFileName;
 
     private Vector3 _previewPosition;
     private Quaternion _previewRotation;
@@ -68,6 +75,9 @@ public class LevelEditor : EditorWindow
     private SerializedProperty _enablePrefabPreviewP;
     private SerializedProperty _enablePreviewSnappingP;
     private SerializedProperty _spawnPositionHeightP;
+    private SerializedProperty _saveFolderNameP;
+    private SerializedProperty _saveFileNameP;
+    private SerializedProperty _loadFileNameP;
 
     private void OnEnable()
     {
@@ -83,23 +93,44 @@ public class LevelEditor : EditorWindow
     {
         if (_so == null) return;
         _so.Update();
+        //preview settings
         EditorGUILayout.PropertyField(_enablePrefabPreviewP);
         if (_enablePrefabPreview)
         {
+            EditorGUI.indentLevel++;
             EditorGUILayout.PropertyField(_enablePreviewSnappingP);
             EditorGUILayout.PropertyField(_previewMaterialP);
             EditorGUILayout.PropertyField(_spawnPositionHeightP);
+            EditorGUI.indentLevel--;
         }
+        //end preview settings
 
-        if (GUILayout.Button("Save Current Level"))
-            EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo();
-        if (GUILayout.Button("Make New Level"))
+        GUILayout.Space(10f);
+
+        //save settings
+        _showSaveSection = EditorGUILayout.Foldout(_showSaveSection, "Save");
+        if (_showSaveSection)
         {
-            if (EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
-                EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            EditorGUI.indentLevel++;
+            EditorGUILayout.PropertyField(_saveFolderNameP);
+            EditorGUILayout.PropertyField(_saveFileNameP);
+            if (GUILayout.Button("Save Current Level"))
+                SaveCurrentLevel();
+            EditorGUI.indentLevel--;
         }
-            
+        //end save settings
 
+        //load settings
+        _showLoadSection = EditorGUILayout.Foldout(_showLoadSection, "Load");
+        if (_showLoadSection)
+        {
+            EditorGUI.indentLevel++;
+            EditorGUILayout.PropertyField(_loadFileNameP);
+            if (GUILayout.Button("Load Level"))
+                LoadLevel(_loadFileName);
+            EditorGUI.indentLevel--;
+        }
+        //end load settings
 
         if (_so.ApplyModifiedProperties())
         {
@@ -194,7 +225,6 @@ public class LevelEditor : EditorWindow
 
             if (GUILayout.Button("Refresh List"))
             {
-                Debug.Log("Refresh");
                 LoadPrefabs();
             }
         }
@@ -256,7 +286,7 @@ public class LevelEditor : EditorWindow
     private void UpdatePreviewPosition()
     {
         Ray ray = HandleUtility.GUIPointToWorldRay(Event.current.mousePosition);
-        if (Physics.Raycast(ray, out RaycastHit hit) && hit.collider.CompareTag("Door") && _enablePreviewSnapping)
+        if (Physics.Raycast(ray, out RaycastHit hit) && hit.collider.CompareTag("SnapPoint") && _enablePreviewSnapping)
         {
             TrySnapPreviewPosition(hit, ray);
         }
@@ -274,23 +304,18 @@ public class LevelEditor : EditorWindow
         }
     }
 
-    private void TrySnapPreviewPosition(RaycastHit hit, Ray ray)
+    private void TrySnapPreviewPosition(RaycastHit snapPoint, Ray ray)
     {
-        hit.collider.TryGetComponent(out BoxCollider doorCollider);
-        _selectedObject.TryGetComponent(out Room selectedObject);
+        _selectedObject.TryGetComponent(out SnappableObject snappableObject);
 
-        //this vector is a direction that goes from the center of the room
-        //present in the scene to its door currently inspected by the mouse pointer
-        Vector3 direction = hit.collider.transform.parent.rotation * doorCollider.center.normalized;
+        //this vector is a direction that goes from the center of the snappableObject
+        //present in the scene to its snap point (door) currently inspected by the mouse pointer
+        Vector3 direction = snapPoint.transform.parent.rotation * snapPoint.transform.localPosition.normalized;
 
-        //if doors are aligned
-        if (Vector3.Dot(direction, _previewRotation * selectedObject.North) < -0.9f ||
-            Vector3.Dot(direction, _previewRotation * selectedObject.East) < -0.9f ||
-            Vector3.Dot(direction, _previewRotation * selectedObject.South) < -0.9f ||
-            Vector3.Dot(direction, _previewRotation * selectedObject.West) < -0.9f)
+        //(if doors are aligned)
+        if (CanSnap(direction, snappableObject))
         {
-            float snapOffset = 15f;
-            _previewPosition = hit.collider.transform.parent.position + direction * snapOffset;
+            _previewPosition = snapPoint.transform.position;
         }
         else
         {
@@ -298,9 +323,24 @@ public class LevelEditor : EditorWindow
         }
     }
 
+    private bool CanSnap(Vector3 snapDirection, SnappableObject snappableObj)
+    {
+        foreach(Transform trs in snappableObj.SnapPoint)
+        {
+            if (Vector3.Dot(snapDirection, _previewRotation * trs.localPosition.normalized) < -0.9f)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Calculate where to locate the preview in the 3D world space based on the camera and mouse pointer position
+    /// </summary>
+    /// <param name="ray">ray that starts from the camera position and go through the mouse pointer</param>
+    /// <returns>Calculated position</returns>
     private Vector3 CalculatePreviewPosition(Ray ray)
     {
-        // H = Y / D  where H = hypotenuse , Y = minor cathetus ,  D = Cos(angle between Y and H)
+        // H = Y / D  where H = hypotenuse , Y = cathetus ,  D = Cos(angle between Y and H)
         float hypotenuse = ray.origin.y / Vector3.Dot(Vector3.down, ray.direction);
         return ray.origin + ray.direction * hypotenuse + Vector3.up * _spawnPositionHeight;
     }
@@ -322,6 +362,9 @@ public class LevelEditor : EditorWindow
         _enablePrefabPreviewP = _so.FindProperty("_enablePrefabPreview");
         _enablePreviewSnappingP = _so.FindProperty("_enablePreviewSnapping");
         _spawnPositionHeightP = _so.FindProperty("_spawnPositionHeight");
+        _saveFolderNameP = _so.FindProperty("_saveFolderName");
+        _saveFileNameP = _so.FindProperty("_saveFileName");
+        _loadFileNameP = _so.FindProperty("_loadFileName");
 
         SceneView.duringSceneGui += DuringSceneGUI;
     }
@@ -339,7 +382,7 @@ public class LevelEditor : EditorWindow
     /// </summary>
     private void LoadPrefabs()
     {
-        _prefabs = Resources.LoadAll<GameObject>("Rooms/");
+        _prefabs = Resources.LoadAll<GameObject>("SnappableObject/");
         _selectionGridIndex = 0;
         _prefabIcons = new Texture[_prefabs.Length];
         for (int i = 0; i < _prefabs.Length; i++)
@@ -347,6 +390,55 @@ public class LevelEditor : EditorWindow
             _prefabIcons[i] = AssetPreview.GetAssetPreview(_prefabs[i]);
         }
         _selectedObject = _prefabs.Length > 0 ? _prefabs[0] : null;
+    }
+
+    /// <summary>
+    /// Save the current level into a json file
+    /// </summary>
+    private void SaveCurrentLevel()
+    {
+        LevelSaveData saveData = new LevelSaveData();
+        foreach (SnappableObject snappableObj in FindObjectsOfType<SnappableObject>())
+        {
+            saveData.IDs.Add(snappableObj.ObjID);
+            saveData.Positions.Add(snappableObj.transform.position);
+            saveData.Rotations.Add(snappableObj.transform.rotation);
+        }
+        JsonSaveHandler.Save(_saveFolderName, _saveFileName, saveData);
+    }
+
+
+    /// <summary>
+    /// Load a level from the passed levelFileName (json file)
+    /// </summary>
+    private void LoadLevel(string levelFileName)
+    {
+        LevelSaveData loadData;
+        loadData = JsonSaveHandler.Load<LevelSaveData>(_loadFileName);
+        if (loadData == null)
+        {
+            Debug.LogError($"Level {levelFileName} loading failed");
+            return;
+        }
+
+        int index = 0;
+        foreach(int id in loadData.IDs)
+        {
+            GameObject obj = PrefabUtility.InstantiatePrefab(GetPrefabByID(id)) as GameObject;
+            obj.transform.SetPositionAndRotation(loadData.Positions[index], loadData.Rotations[index]);
+            index++;
+        }
+    }
+
+    private GameObject GetPrefabByID(int id)
+    {
+        foreach(GameObject prefab in _prefabs)
+        {
+            if (prefab.GetComponent<SnappableObject>().ObjID == id)
+                return prefab;
+        }
+        Debug.LogError($"Prefab {id} not found");
+        return null;
     }
 
     
