@@ -2,7 +2,6 @@
 using System.Collections;
 using UnityEditor;
 using Unity.EditorCoroutines.Editor;
-using UnityEditor.SceneManagement;
 using UnityEngine;
 
 public class LevelEditor : EditorWindow
@@ -39,11 +38,6 @@ public class LevelEditor : EditorWindow
     /// Rect of the palette menu (scene view UI)
     /// </summary>
     private Rect _paletteMenuRect;
-
-    /// <summary>
-    /// The prefabs icons visualized in the scene view UI (palette menu)
-    /// </summary>
-    private Texture[] _prefabIcons;
 
     /// <summary>
     /// Index of the current prefab selected in the palette menu
@@ -211,11 +205,11 @@ public class LevelEditor : EditorWindow
             using (new GUILayout.HorizontalScope())
             {
                 _scrollPos = GUILayout.BeginScrollView(_scrollPos);
-
+                
                 //cache the selected index before it can be modified
                 int index = _selectionGridIndex;
                 int selectionGridColumnCount = 1;
-                _selectionGridIndex = GUILayout.SelectionGrid(_selectionGridIndex, _prefabIcons, selectionGridColumnCount);
+                _selectionGridIndex = GUILayout.SelectionGrid(_selectionGridIndex, GetPrefabIcons(), selectionGridColumnCount); ;
                 PerformSelectionChange(index);
 
                 GUILayout.EndScrollView();
@@ -384,12 +378,18 @@ public class LevelEditor : EditorWindow
     {
         _prefabs = Resources.LoadAll<GameObject>("SnappableObject/");
         _selectionGridIndex = 0;
-        _prefabIcons = new Texture[_prefabs.Length];
+        _selectedObject = _prefabs.Length > 0 ? _prefabs[0] : null;
+    }
+
+    private Texture[] GetPrefabIcons()
+    {
+        if (_prefabs == null || _prefabs.Length == 0) return null;
+        Texture[] icons = new Texture[_prefabs.Length];
         for (int i = 0; i < _prefabs.Length; i++)
         {
-            _prefabIcons[i] = AssetPreview.GetAssetPreview(_prefabs[i]);
+            icons[i] = AssetPreview.GetAssetPreview(_prefabs[i]);
         }
-        _selectedObject = _prefabs.Length > 0 ? _prefabs[0] : null;
+        return icons;
     }
 
     /// <summary>
